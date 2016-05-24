@@ -16,7 +16,9 @@ class client:
     def __init__(self):
         self.browser = requests.session()
         self.uuid = ''
-        self.wxInfo = {}
+        self.wxInfo = {}  # 登陆相关信息
+        self.User = {}  # 当前用户信息
+        self.Contact = []  # 用户联系人
 
     def login(self):
         self.get_UUID()
@@ -27,9 +29,11 @@ class client:
                     if code == '200':
                         print 'login success'
                         break
-                    print code
                     time.sleep(1)
                 self.wx_Init()
+        self.wx_StatusNotify()
+        self.wx_GetContact()
+        print len(self.Contact)
 
     def get_UUID(self):
         url = '%s/jslogin' % BASE_URL
@@ -39,7 +43,7 @@ class client:
         }
         response = self.browser.get(url, params=param)
         regex = r'window.QRLogin.code = (.{3}); window.QRLogin.uuid = "(.*)";'
-        print response.text
+        # print response.text
         result = re.search(regex, response.text)
         if result and result.group(1) == '200':
             self.uuid = result.group(2)
@@ -50,7 +54,7 @@ class client:
         response = self.browser.get(url, stream=True)
 
         OS = platform.system()
-        print OS
+        # print OS
         with open(QR_PATH, 'wb') as f:
             f.write(response.content)
         if OS == 'Darwin':
@@ -90,7 +94,27 @@ class client:
         }
         headers = {'ContentType': 'application/json; charset=UTF-8'}
         response = self.browser.post(url, data=json.dumps(data), headers=headers)
-        print response.content
+        result = json.loads(response.content)
+        self.User = result['User']
+
+    def wx_StatusNotify(self):
+        url = '%s/webwxstatusnotify' % self.wxInfo['url']
+        data = {
+            'BaseRequest': self.wxInfo['BaseRequest'],
+            'Code': 3,
+            'FromUserName': self.User['UserName'],
+            'ToUserName': self.User['UserName'],
+            'ClientMsgId': int(time.time())
+        }
+        headers = {'ContentType': 'application/json; charset=UTF-8'}
+        self.browser.post(url, json.dumps(data), headers=headers)
+
+    def wx_GetContact(self):
+        url = '%s/webwxgetcontact?r=%s&seq=0&skey=%s' % (self.wxInfo['url'],
+                                                         int(time.time()), self.wxInfo['BaseRequest']['skey'])
+        headers = {'ContentType': 'application/json; charset=UTF-8'}
+        r = self.browser.get(url, headers=headers)
+        self.Contact = json.loads(r.content.decode('utf-8', 'replace'))['MemberList']
 
 
 if __name__ == '__main__':
