@@ -7,6 +7,9 @@ import subprocess
 import time
 import requests
 import xml.etree.ElementTree as ET
+import display
+
+import thread
 
 BASE_URL = 'https://login.weixin.qq.com'
 QR_PATH = 'qr.jpg'
@@ -33,9 +36,10 @@ class client:
                 self.wx_Init()
         self.wx_StatusNotify()
         self.wx_GetContact()
-        print len(self.Contact)
+        self.wx_Start()
 
     def get_UUID(self):
+        display.print_line('获取UUID')
         url = '%s/jslogin' % BASE_URL
         param = {
             'appid': 'wx782c26e4c19acffb',
@@ -96,6 +100,7 @@ class client:
         response = self.browser.post(url, data=json.dumps(data), headers=headers)
         result = json.loads(response.content)
         self.User = result['User']
+        self.wxInfo['SyncKey'] = '|'.join(['%s_%s' % (item['Key'], item['Val']) for item in result['SyncKey']['List']])
 
     def wx_StatusNotify(self):
         url = '%s/webwxstatusnotify' % self.wxInfo['url']
@@ -115,6 +120,68 @@ class client:
         headers = {'ContentType': 'application/json; charset=UTF-8'}
         r = self.browser.get(url, headers=headers)
         self.Contact = json.loads(r.content.decode('utf-8', 'replace'))['MemberList']
+
+    def msg_Check(self):
+        display.print_line('检验是否有消息')
+        url = '%s/synccheck' % self.wxInfo['url']
+        params = {
+            'r': int(time.time()),
+            'skey': self.wxInfo['BaseRequest']['skey'],
+            'sid': self.wxInfo['BaseRequest']['wxsid'],
+            'uin': self.wxInfo['BaseRequest']['wxuin'],
+            'deviceid': self.wxInfo['BaseRequest']['pass_ticket'],
+            'synckey': self.wxInfo['SyncKey']
+        }
+        result = self.browser.get(url, params=params)
+        regex = r'window.synccheck={retcode:"(\d+)",selector:"(\d+)"}'
+        pm = re.search(regex, result.text)
+        if pm.group(1) != '0':
+            print '同步消息失败!'
+            return None
+        # print '获取消息:' + result.text.decode('utf-8', 'replace')
+        return pm.group(2)
+
+    def msg_Get(self):
+        url = '%s/webwxsync?sid=%s&skey=%s' % (
+            self.wxInfo['url'], self.wxInfo['BaseRequest']['wxsid'], self.wxInfo['BaseRequest']['skey'])
+        data = {
+            'BaseRequest': self.wxInfo['BaseRequest'],
+            'SyncKey': self.wxInfo['SyncKey'],
+            'rr': int(time.time())
+        }
+        headers = {'ContentType': 'application/json; charset=UTF-8'}
+        r = self.browser.post(url, data=json.dumps(data), headers=headers)
+
+        dic = json.loads(r.content.decode('utf-8', 'replace'))
+        self.wxInfo['SyncKey'] = dic['SyncKey']
+        if dic['AddMsgCount'] != 0:
+            return dic['AddMsgList']
+
+    def wx_Start(self):
+        def maintain_loop():
+            i = self.msg_Check()
+            count = 0  # 错误次数
+            pauseTime = 1
+            while i and count < 4:
+                try:
+                    if pauseTime < 5:
+                        pauseTime += 2
+                    if i != '0':
+                        msgList = self.msg_Get()
+                        print msgList
+                    if msgList:
+                        # msgList = self.__produce_msg(msgList)
+                        # for msg in msgList: self.msgList.insert(0, msg)
+                        pauseTime = 1
+                    time.sleep(pauseTime)
+                    i = self.msg_Check()
+                    count = 0
+                except Exception, e:
+                    print e.message
+                    count += 1
+                    time.sleep(count * 3)
+
+        maintain_loop()
 
 
 if __name__ == '__main__':
